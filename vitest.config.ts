@@ -19,10 +19,10 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'html'],
       reportsDirectory: 'coverage',
-      // Scope to the genuinely unit-testable pure module. DOM/integration-heavy code
+      // Scope to the genuinely unit-testable pure modules. DOM/integration-heavy code
       // (SW registration, the widget itself — canvas drawing, debounce, downloads)
       // is covered by the Playwright e2e suite instead.
-      include: ['src/utils/qrCapacity.ts'],
+      include: ['src/utils/qrCapacity.ts', 'src/utils/wifiPayload.ts'],
       thresholds: { lines: 80, functions: 80, statements: 80, branches: 75 },
     },
   },

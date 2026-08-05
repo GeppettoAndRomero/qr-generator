@@ -94,11 +94,20 @@
 .app-field__required {
   display: inline-block;
   padding: 2px var(--space-2);
-  background-color: var(--color-danger);
-  color: white;
+  /* White text on the raw --color-danger fill measured 3.76:1, and --color-danger
+     itself as small (12px) text measured only 3.51:1 against --color-surface (axe:
+     WCAG AA needs 4.5:1 for text this size regardless of font-weight) — this class
+     was dormant (AppField.tsx, its only consumer, is unused in this tool) until the
+     Wi-Fi form started rendering it. Fixed by using --color-text for the readable
+     label (the same text color every other line of copy on the page already relies
+     on for contrast, in both themes) and keeping --color-danger only as a decorative
+     border, which is not subject to the 4.5:1 text-contrast requirement. */
+  background-color: transparent;
+  color: var(--color-text);
+  border: 1px solid var(--color-danger);
   font-size: var(--fs-1);
   border-radius: var(--radius-xs);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .app-field__input,

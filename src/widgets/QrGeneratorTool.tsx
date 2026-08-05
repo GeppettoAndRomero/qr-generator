@@ -1,39 +1,50 @@
 /**
  * QrGeneratorTool — the tool's only non-frozen widget.
  *
- * One direction only: text/URL in, QR code image out. Typing (or pasting) into the
- * textarea debounce-generates a live preview ~250ms after the last keystroke, using
- * the `qrcode` npm package (MIT, by soldair) — QR encoding involves Reed-Solomon error
+ * Two input modes, one output pipeline. "Text or URL" (the original mode) encodes
+ * whatever is typed exactly as typed. "Wi-Fi network" builds the standard
+ * `WIFI:T:...;S:...;P:...;;` payload (see `utils/wifiPayload.ts`) from a network
+ * name, security type, password, and hidden-network flag, then feeds that string
+ * through the exact same generation path as plain text — from the encoder's point of
+ * view a Wi-Fi QR code is just a specific string, nothing more. Typing (or filling in
+ * a form) debounce-generates a live preview ~250ms after the last change, using the
+ * `qrcode` npm package (MIT, by soldair) — QR encoding involves Reed-Solomon error
  * correction, which is genuinely easy to get subtly wrong by hand, so this tool does
  * not implement its own encoder. `QRCode.toCanvas` draws the live preview; the SVG
  * download is produced separately via `QRCode.toString({ type: 'svg' })` (see
  * downloadSvg below) so the exported file is real vector markup, not a canvas
  * rasterization.
  *
- * The input is encoded exactly as typed: no shortener, no redirect, no rewriting.
- * That is also why there is no "settings" persistence here (see issue #20's "no
- * history/analytics" decision) — the current draft lives in plain useState and
- * disappears on reload, same as password-generator (issue #21).
+ * The input is encoded exactly as typed/entered: no shortener, no redirect, no
+ * rewriting. That is also why there is no "settings" persistence here (see issue
+ * #20's "no history/analytics" decision) — the current draft (in either mode) lives
+ * in plain useState and disappears on reload, same as password-generator (issue #21).
+ * This matters more in Wi-Fi mode than in text mode: the password field is never
+ * written anywhere but this in-memory state and the resulting QR image.
  *
  * Capacity: `qrcode` itself is the source of truth for whether an input fits (it does
  * real multi-segment mode optimization). This widget always attempts the real encode
  * first; only if that throws does it consult `qrCapacity.ts` to build a specific
- * "N characters/bytes entered, limit is M" message — never a silent truncation.
+ * "N characters/bytes entered, limit is M" message — never a silent truncation. This
+ * applies identically to the assembled Wi-Fi payload string.
  */
 
-import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
 import { toCanvas, toString as qrToString } from 'qrcode';
 import { AppCard } from './AppCard';
 import { ui } from '@/i18n/ui';
 import { checkCapacity, type EcLevel } from '@/utils/qrCapacity';
+import { buildWifiPayload, type WifiAuthType } from '@/utils/wifiPayload';
 
 const DEBOUNCE_MS = 250;
 const EXAMPLE_TEXT = 'https://runlocally.app/';
+const EXAMPLE_WIFI = { ssid: 'MyHomeWiFi', authType: 'WPA' as WifiAuthType, password: 'correct-horse-battery', hidden: false };
 
 type SizeKey = 'small' | 'medium' | 'large';
 const SIZE_PX: Record<SizeKey, number> = { small: 256, medium: 512, large: 1024 };
 
 type Status = 'idle' | 'generating' | 'done' | 'error';
+type Mode = 'text' | 'wifi';
 
 interface QrGeneratorToolProps {
   locale?: string;
@@ -53,7 +64,15 @@ function triggerDownload(blob: Blob, filename: string) {
 export function QrGeneratorTool({ locale = 'en' }: QrGeneratorToolProps) {
   const t = (ui as any)[locale] ?? ui.en;
 
+  const [mode, setMode] = useState<Mode>('text');
   const [text, setText] = useState('');
+
+  const [wifiSsid, setWifiSsid] = useState('');
+  const [wifiAuthType, setWifiAuthType] = useState<WifiAuthType>('WPA');
+  const [wifiPassword, setWifiPassword] = useState('');
+  const [wifiHidden, setWifiHidden] = useState(false);
+  const [revealWifiPassword, setRevealWifiPassword] = useState(false);
+
   const [ecLevel, setEcLevel] = useState<EcLevel>('M');
   const [sizeKey, setSizeKey] = useState<SizeKey>('medium');
   const [status, setStatus] = useState<Status>('idle');
@@ -71,6 +90,18 @@ export function QrGeneratorTool({ locale = 'en' }: QrGeneratorToolProps) {
     (globalThis as Record<string, unknown>).__toolReady = true;
   }, []);
 
+  // The single string actually handed to the encoder, regardless of which mode built
+  // it. In wifi mode this is '' whenever the form is not yet complete enough to mean
+  // anything (no SSID yet, or a secured network with no password yet) — treated
+  // exactly like empty text-mode input: idle, not an error, because an unfinished
+  // form is not a mistake.
+  const payload = useMemo(() => {
+    if (mode === 'text') return text;
+    return (
+      buildWifiPayload({ ssid: wifiSsid, authType: wifiAuthType, password: wifiPassword, hidden: wifiHidden }) ?? ''
+    );
+  }, [mode, text, wifiSsid, wifiAuthType, wifiPassword, wifiHidden]);
+
   const buildCapacityMessage = useCallback(
     (input: string, ec: EcLevel): string => {
       const info = checkCapacity(input, ec);
@@ -84,11 +115,11 @@ export function QrGeneratorTool({ locale = 'en' }: QrGeneratorToolProps) {
   );
 
   // Debounced live preview: ~250ms after the last keystroke or setting change,
-  // (re)generate. Empty input just clears the preview — it is not an error.
+  // (re)generate. Empty payload just clears the preview — it is not an error.
   useEffect(() => {
     const myToken = ++tokenRef.current;
 
-    if (text.length === 0) {
+    if (payload.length === 0) {
       setStatus('idle');
       setErrorMessage(null);
       setSvgMarkup(null);
@@ -110,8 +141,8 @@ export function QrGeneratorTool({ locale = 'en' }: QrGeneratorToolProps) {
         // margin is left at the library default (4 modules) — the QR spec's
         // recommended quiet zone, needed for reliable scanning; shrinking it is not
         // worth the scan-reliability risk for a purely cosmetic size gain.
-        await toCanvas(canvas, text, { errorCorrectionLevel: ecLevel, width });
-        const svg = await qrToString(text, { type: 'svg', errorCorrectionLevel: ecLevel, width });
+        await toCanvas(canvas, payload, { errorCorrectionLevel: ecLevel, width });
+        const svg = await qrToString(payload, { type: 'svg', errorCorrectionLevel: ecLevel, width });
         if (tokenRef.current !== myToken) return; // superseded by newer input
         setSvgMarkup(svg);
         setStatus('done');
@@ -120,14 +151,16 @@ export function QrGeneratorTool({ locale = 'en' }: QrGeneratorToolProps) {
         if (tokenRef.current !== myToken) return;
         setSvgMarkup(null);
         setStatus('error');
-        setErrorMessage(buildCapacityMessage(text, ecLevel) || t.errGenerateFailed);
+        setErrorMessage(buildCapacityMessage(payload, ecLevel) || t.errGenerateFailed);
         const ctx = canvas.getContext('2d');
         ctx?.clearRect(0, 0, canvas.width, canvas.height);
       }
     }, DEBOUNCE_MS);
 
     return () => clearTimeout(timer);
-  }, [text, ecLevel, sizeKey, buildCapacityMessage, t]);
+  }, [payload, ecLevel, sizeKey, buildCapacityMessage, t]);
+
+  const downloadFilenamePrefix = mode === 'wifi' ? 'wifi-qr-code' : 'qr-code';
 
   const downloadPng = useCallback(() => {
     const canvas = canvasRef.current;
@@ -138,56 +171,199 @@ export function QrGeneratorTool({ locale = 'en' }: QrGeneratorToolProps) {
         setDownloadError(t.downloadError);
         return;
       }
-      triggerDownload(blob, 'qr-code.png');
+      triggerDownload(blob, `${downloadFilenamePrefix}.png`);
     }, 'image/png');
-  }, [t]);
+  }, [t, downloadFilenamePrefix]);
 
   const downloadSvg = useCallback(() => {
     if (!svgMarkup) return;
     setDownloadError(null);
     try {
       const blob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
-      triggerDownload(blob, 'qr-code.svg');
+      triggerDownload(blob, `${downloadFilenamePrefix}.svg`);
     } catch {
       setDownloadError(t.downloadError);
     }
-  }, [svgMarkup, t]);
+  }, [svgMarkup, t, downloadFilenamePrefix]);
 
   const loadExample = () => {
-    setText(EXAMPLE_TEXT);
+    if (mode === 'wifi') {
+      setWifiSsid(EXAMPLE_WIFI.ssid);
+      setWifiAuthType(EXAMPLE_WIFI.authType);
+      setWifiPassword(EXAMPLE_WIFI.password);
+      setWifiHidden(EXAMPLE_WIFI.hidden);
+    } else {
+      setText(EXAMPLE_TEXT);
+    }
   };
 
   const clearText = () => {
-    setText('');
+    if (mode === 'wifi') {
+      setWifiSsid('');
+      setWifiAuthType('WPA');
+      setWifiPassword('');
+      setWifiHidden(false);
+      setRevealWifiPassword(false);
+    } else {
+      setText('');
+    }
     setDownloadError(null);
   };
 
   const canDownload = status === 'done';
+  const wifiPasswordRequired = wifiAuthType !== 'nopass';
+  const clearDisabled = mode === 'wifi' ? wifiSsid === '' && wifiPassword === '' : text === '';
+  const passwordInputType = revealWifiPassword ? 'text' : 'password';
 
   return (
     <div>
       <AppCard>
         <div style="margin-bottom: var(--space-4);">
           <h2 style="margin: 0 0 var(--space-1) 0; font-size: var(--fs-4); font-weight: 600;">
-            {t.inputHeading}
+            {mode === 'wifi' ? t.inputHeadingWifi : t.inputHeading}
           </h2>
-          <p style="margin: 0; font-size: var(--fs-2); color: var(--color-subtle);">{t.inputSubtitle}</p>
+          <p style="margin: 0; font-size: var(--fs-2); color: var(--color-subtle);">
+            {mode === 'wifi' ? t.inputSubtitleWifi : t.inputSubtitle}
+          </p>
         </div>
 
-        <label class="visually-hidden" for="qr-text">
-          {t.textLabel}
-        </label>
-        <textarea
-          id="qr-text"
-          data-testid="qr-text"
-          class="app-field__textarea"
-          style="width: 100%; min-height: 140px; font-size: var(--fs-2);"
-          value={text}
-          placeholder={t.textPlaceholder}
-          spellcheck={false}
-          onInput={(e) => setText((e.currentTarget as HTMLTextAreaElement).value)}
-        />
+        <div role="tablist" aria-label={t.modeTablistLabel} class="qr-mode-tabs">
+          <button
+            type="button"
+            role="tab"
+            id="mode-tab-text"
+            data-testid="mode-tab-text"
+            aria-selected={mode === 'text'}
+            class={`app-button app-button--${mode === 'text' ? 'primary' : 'secondary'}`}
+            onClick={() => setMode('text')}
+          >
+            {t.tabText}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="mode-tab-wifi"
+            data-testid="mode-tab-wifi"
+            aria-selected={mode === 'wifi'}
+            class={`app-button app-button--${mode === 'wifi' ? 'primary' : 'secondary'}`}
+            onClick={() => setMode('wifi')}
+          >
+            {t.tabWifi}
+          </button>
+        </div>
 
+        {mode === 'text' && (
+          <div>
+            <label class="visually-hidden" for="qr-text">
+              {t.textLabel}
+            </label>
+            <textarea
+              id="qr-text"
+              data-testid="qr-text"
+              class="app-field__textarea"
+              style="width: 100%; min-height: 140px; font-size: var(--fs-2);"
+              value={text}
+              placeholder={t.textPlaceholder}
+              spellcheck={false}
+              onInput={(e) => setText((e.currentTarget as HTMLTextAreaElement).value)}
+            />
+          </div>
+        )}
+
+        {mode === 'wifi' && (
+          <div class="qr-wifi-fields">
+            <div class="qr-field">
+              <label class="app-field__label" for="wifi-ssid">
+                {t.wifiSsidLabel}
+                <span class="app-field__required">{t.required}</span>
+              </label>
+              <input
+                id="wifi-ssid"
+                data-testid="wifi-ssid"
+                type="text"
+                class="app-field__input"
+                style="width: 100%;"
+                value={wifiSsid}
+                placeholder={t.wifiSsidPlaceholder}
+                autocomplete="off"
+                spellcheck={false}
+                onInput={(e) => setWifiSsid((e.currentTarget as HTMLInputElement).value)}
+              />
+            </div>
+
+            <div class="qr-field">
+              <label class="app-field__label" for="wifi-security">
+                {t.wifiSecurityLabel}
+              </label>
+              <select
+                id="wifi-security"
+                data-testid="wifi-security"
+                class="app-field__input"
+                value={wifiAuthType}
+                onChange={(e) => {
+                  const next = (e.currentTarget as HTMLSelectElement).value as WifiAuthType;
+                  setWifiAuthType(next);
+                  if (next === 'nopass') {
+                    setWifiPassword('');
+                    setRevealWifiPassword(false);
+                  }
+                }}
+              >
+                <option value="WPA">{t.wifiSecurityWpaLabel}</option>
+                <option value="WEP">{t.wifiSecurityWepLabel}</option>
+                <option value="nopass">{t.wifiSecurityNopassLabel}</option>
+              </select>
+            </div>
+
+            {wifiPasswordRequired && (
+              <div class="qr-field">
+                <label class="app-field__label" for="wifi-password">
+                  {t.wifiPasswordLabel}
+                  <span class="app-field__required">{t.required}</span>
+                </label>
+                <div class="qr-wifi-password-row">
+                  <input
+                    id="wifi-password"
+                    data-testid="wifi-password"
+                    type={passwordInputType}
+                    class="app-field__input"
+                    style="flex: 1;"
+                    value={wifiPassword}
+                    placeholder={t.wifiPasswordPlaceholder}
+                    autocomplete="off"
+                    spellcheck={false}
+                    onInput={(e) => setWifiPassword((e.currentTarget as HTMLInputElement).value)}
+                  />
+                  <button
+                    type="button"
+                    id="wifi-password-reveal-action"
+                    data-testid="wifi-password-reveal"
+                    aria-label={revealWifiPassword ? t.hidePassword : t.showPassword}
+                    aria-pressed={revealWifiPassword}
+                    class="app-button app-button--secondary"
+                    onClick={() => setRevealWifiPassword((v) => !v)}
+                  >
+                    {revealWifiPassword ? '🙈' : '👁'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <label class="checkbox-field" for="wifi-hidden">
+              <input
+                id="wifi-hidden"
+                data-testid="wifi-hidden"
+                type="checkbox"
+                checked={wifiHidden}
+                onChange={(e) => setWifiHidden((e.currentTarget as HTMLInputElement).checked)}
+              />
+              <span>{t.wifiHiddenLabel}</span>
+            </label>
+          </div>
+        )}
+
+        {/* EC level and size apply identically in both modes — one shared control
+            block regardless of which mode is active. */}
         <div class="qr-controls">
           <div class="qr-field">
             <label class="app-field__label" for="qr-ec-level">
@@ -242,7 +418,7 @@ export function QrGeneratorTool({ locale = 'en' }: QrGeneratorToolProps) {
             type="button"
             class="app-button app-button--ghost"
             onClick={clearText}
-            disabled={text === ''}
+            disabled={clearDisabled}
           >
             {t.clear}
           </button>
@@ -258,7 +434,7 @@ export function QrGeneratorTool({ locale = 'en' }: QrGeneratorToolProps) {
 
         {status === 'idle' && (
           <p role="status" data-testid="qr-status" style="margin: 0 0 var(--space-3) 0; font-size: var(--fs-2); color: var(--color-subtle);">
-            {t.previewEmpty}
+            {mode === 'wifi' ? t.previewEmptyWifi : t.previewEmpty}
           </p>
         )}
         {status === 'generating' && (
@@ -280,7 +456,7 @@ export function QrGeneratorTool({ locale = 'en' }: QrGeneratorToolProps) {
           data-testid="qr-canvas-wrap"
           style={{ display: status === 'done' ? 'inline-block' : 'none' }}
         >
-          <canvas ref={canvasRef} data-testid="qr-canvas" aria-label={t.previewAria} />
+          <canvas ref={canvasRef} data-testid="qr-canvas" aria-label={mode === 'wifi' ? t.wifiPreviewAria : t.previewAria} />
         </div>
 
         <div style="display: flex; gap: var(--space-2); margin-top: var(--space-4); flex-wrap: wrap;">
@@ -312,6 +488,12 @@ export function QrGeneratorTool({ locale = 'en' }: QrGeneratorToolProps) {
       </AppCard>
 
       <style>{`
+        .qr-mode-tabs {
+          display: flex;
+          gap: var(--space-2);
+          margin-bottom: var(--space-4);
+          flex-wrap: wrap;
+        }
         .qr-controls {
           display: grid;
           grid-template-columns: 1fr 1fr;
@@ -327,6 +509,33 @@ export function QrGeneratorTool({ locale = 'en' }: QrGeneratorToolProps) {
           display: flex;
           flex-direction: column;
           gap: var(--space-1);
+        }
+        .qr-wifi-fields {
+          display: flex;
+          flex-direction: column;
+          gap: var(--space-4);
+        }
+        .qr-wifi-password-row {
+          display: flex;
+          gap: var(--space-2);
+        }
+        .checkbox-field {
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+          cursor: pointer;
+          user-select: none;
+          font-size: var(--fs-2);
+          color: var(--color-text);
+        }
+        .checkbox-field input[type="checkbox"] {
+          width: 20px;
+          height: 20px;
+          cursor: pointer;
+          accent-color: var(--color-primary);
+        }
+        .checkbox-field:hover {
+          color: var(--color-primary);
         }
         .qr-canvas-wrap {
           background: #ffffff;

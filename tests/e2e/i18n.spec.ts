@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { waitReady, generateQr } from './_helpers';
+import { waitReady, generateQr, generateWifiQr } from './_helpers';
 
 // Content routing is engine-independent; one browser is enough.
 test.describe('i18n', () => {
@@ -15,6 +15,12 @@ test.describe('i18n', () => {
       await page.goto(loc.path);
       await waitReady(page);
       await generateQr(page);
+    });
+
+    test(`generates a Wi-Fi QR code on the ${loc.lang} route`, async ({ page }) => {
+      await page.goto(loc.path);
+      await waitReady(page);
+      await generateWifiQr(page);
     });
   }
 
