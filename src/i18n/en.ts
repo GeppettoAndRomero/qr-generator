@@ -4,12 +4,12 @@ export const en: ToolContent = {
   htmlLang: 'en',
 
   meta: {
-    title: 'Generate a QR Code — No Tracking, PNG/SVG Export | runlocally',
+    title: 'Generate a QR Code — No Sign Up, No Tracking | runlocally',
     description:
-      'Turn text, a URL, or Wi-Fi network details into a QR code entirely in your browser. A static code with no redirect or tracking layer. Download as PNG or SVG. Open source, works offline.',
-    ogTitle: 'Generate a QR Code — No Tracking, PNG/SVG Export',
+      'Turn text, a URL, or Wi-Fi network details into a QR code entirely in your browser — no sign up, no login, and no email address needed. A static code with no redirect or tracking layer. Download as PNG or SVG. Open source, works offline.',
+    ogTitle: 'Generate a QR Code — No Sign Up, No Tracking',
     ogDescription:
-      'Turn text, a URL, or a Wi-Fi network into a QR code in your browser. No redirect, no tracking layer. Download as PNG or SVG.',
+      'Turn text, a URL, or a Wi-Fi network into a QR code in your browser — no sign up, no redirect, no tracking layer. Download as PNG or SVG.',
   },
 
   hero: {
@@ -33,7 +33,7 @@ export const en: ToolContent = {
       'Privacy here is structural, not a promise. There is no upload step because there is no server to upload to:',
     points: [
       'The QR code encodes the literal text you typed — it is not rewritten into a short link or a redirect URL first.',
-      "Many \"free\" QR generator websites quietly replace your content with a link to their own server, so every scan is logged before the visitor ever reaches the real destination. This tool has no such layer: there is nothing to route a scan through, because generation happens entirely on your device.",
+      "Many \"free\" QR generator websites quietly replace your content with a link to their own server, so every scan is logged before the visitor ever reaches the real destination. This tool has no such layer: there is nothing to route a scan through, because generation happens entirely on your device. That also means the code cannot expire or stop working if a subscription lapses — there is no subscription, no login, and no ads, because there is no account system to begin with.",
       'Encoding happens entirely in your browser using an open-source library; the page makes no request carrying your text.',
       'The same is true in Wi-Fi mode: the network password is built into the QR code entirely on your device and never sent anywhere. Typing a Wi-Fi password into an upload-based generator means that password briefly existed on someone else\'s server — this tool has no server for it to reach.',
       'The source is open and anyone can read it (MIT).',
@@ -68,6 +68,10 @@ export const en: ToolContent = {
 
   faqHeading: 'FAQ',
   faq: [
+    {
+      q: 'Do I need to sign up, and does the QR code expire?',
+      a: 'No account, no sign up, no login, and no email address are needed — there is nothing to register for. The code encodes your text directly instead of a link through a paid redirect service, so it does not expire or stop working if a subscription lapses, because there is no subscription. The tool has no ads either.',
+    },
     {
       q: 'Does this QR code track who scans it?',
       a: 'No. It encodes your text directly — there is no redirect through a server that could log scans, locations, or timestamps. Some other QR generators replace your content with a link to their own tracking service; this tool has no such service to route through.',
